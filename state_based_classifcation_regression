@@ -1,0 +1,508 @@
+% pricipal targets classifcation and regression using GPR decoder
+% general interval slection
+% align the trials based on go cue or movement onset (Alignment Time)
+% output EEG_Trials_Complex
+% choose T_before and T_after before and after alignement time
+% T_before + Aligment + T_after
+% switch + regression
+
+
+clc
+clear
+close all
+
+remove_IDX = [1 2 3 4 5 33 34 61 62 63]; %removed channels
+selected_ch = 1:63;
+selected_ch(remove_IDX)=[];
+
+
+sub_no = '6'; % subject number
+alignment = 'go_cue'; % 'go_cue'
+run_numbers = [1 2 3 4]; % run numbers
+sp_filter = 'off'; % lap car off
+remove_channels ='on'; % 'off' 'on'
+
+
+Fs = 512;
+T_before = floor(0.5*Fs); % time before movement onset
+T_after = floor(0*Fs);% time after movement onset
+
+
+currentdir = pwd;
+
+currentdir = currentdir(1:end-13);
+locdir = strcat(currentdir,'\channellocation_63ch.ced');
+LOCS = readlocs(locdir);
+LOCS = struct2table(LOCS);
+XLocs = LOCS.X;
+YLocs = LOCS.Y;
+ZLocs = LOCS.Z;
+
+% loading ONSET sample times
+onsetdir = strcat(currentdir,'sub_',sub_no,'\clean_data\ONSET_IDX.mat');
+load(onsetdir)
+MOV_IDX = ONSET_IDX.MOV_IDX;
+
+
+% continous data extraction %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+EEG_Trials_Complex = []; % contains eeg data T_before and T_after movement onset!
+EEG_FB = [];
+VEL_Trials = []; % contains velocity data  from selected runs!
+POS_Trials = []; % contains positions data  from selected runs!
+Target_ind_Trials = [];
+EEG_base_Trials = [];
+
+off_target_EEG_Trials_Complex = []; % contains eeg data from selected runs!
+off_target_EEG_FB=[];
+off_target_POS_Trials = []; 
+
+
+
+switch alignment
+    case 'onset'
+        cnt_onset = 1;
+        for ir=run_numbers
+            runstr = num2str(ir);
+            dirCOT_str = strcat(currentdir,'sub_',sub_no,'\clean_data\COT_str_run_',runstr,'.mat');
+            fprintf("dir: %s \n",dirCOT_str)
+            load(dirCOT_str)
+            target_labels = COT_str.Mov.target_labels;
+            principal_target_ind = (target_labels<5);
+            target_indices = target_labels(principal_target_ind);
+            
+            temp_pos = COT_str.Mov.pos(principal_target_ind);
+            temp_vel = COT_str.Mov.vel(principal_target_ind);
+            
+            eeg_fb_temp = COT_str.EEG.EEG_FB(principal_target_ind);
+            eeg_pre_temp = COT_str.EEG.EEG_Pre(principal_target_ind);
+            eeg_base_temp = COT_str.EEG.EEG_baseline(principal_target_ind);
+            
+            touch_ind = COT_str.Mov.touch_ind_FB(principal_target_ind);
+            
+            Ntrials = length(target_indices);
+            eeg_complex_cell = cell(1,Ntrials);
+            %%%finding movement onset
+            
+            for nn = 1:Ntrials
+                
+                
+                mov_onset = MOV_IDX(cnt_onset);
+                cnt_onset = cnt_onset+1;
+                
+                
+                eegafter = eeg_fb_temp{1,nn}(mov_onset:mov_onset+T_after-1,:);
+                T_rec = T_before - mov_onset;
+                if T_rec>=0
+                    eegbefore = [eeg_pre_temp{1,nn}(end-T_rec:end,:);eeg_fb_temp{1,nn}(2:mov_onset,:)];
+                else
+                    eegbefore = [eeg_fb_temp{1,nn}(mov_onset-T_before:mov_onset-1,:)];
+                end
+                eegcomplex_temp = [eegbefore;eegafter];
+                
+                
+                eegcomplex_temp = eegcomplex_temp(:,1:63);
+                
+                %%%%%%%%%%%%%%%%%%%%  SPATIAL FILTERING
+                fprintf("\n")
+                if sp_filter == "lap"
+                    [surf_lap,G,H] = laplacian_perrinX(eegcomplex_temp',XLocs, YLocs, ZLocs);
+                    eegcomplex_temp = surf_lap';
+                    fprintf("surface laplacian applied \n")
+                elseif sp_filter == "car"
+                    eegcomplex_temp = myCAR(eegcomplex_temp);
+                    fprintf("CAR applied \n")
+                else
+                    eegcomplex_temp = eegcomplex_temp;
+                    fprintf("nothing applied ")
+                    
+                end
+                
+                %%%%%%%%%%%%%%%%%%%%%%%%% remove channels
+                if strcmp(remove_channels,'on')
+                    
+                    eegcomplex_temp(:,remove_IDX) = [];
+                    fprintf("\n some channels removed \n")
+                end
+                
+                eeg_complex_cell{1,nn} = eegcomplex_temp;
+                
+            end
+            
+            EEG_Trials_Complex = [EEG_Trials_Complex,eeg_complex_cell];
+            Target_ind_Trials = [Target_ind_Trials, target_indices];
+            POS_Trials = [POS_Trials,temp_pos];
+            VEL_Trials = [VEL_Trials,temp_vel];
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    case 'go_cue'
+        
+        
+        for ir=run_numbers
+            runstr = num2str(ir);
+            dirCOT_str = strcat(currentdir,'sub_',sub_no,'\clean_data\COT_str_run_',runstr,'.mat');
+            fprintf("dir: %s \n",dirCOT_str)
+            load(dirCOT_str)
+            target_labels = COT_str.Mov.target_labels;
+            principal_target_ind = (target_labels<5);
+            target_indices = target_labels(principal_target_ind);
+            
+            temp_pos = COT_str.Mov.pos(principal_target_ind);
+            temp_vel = COT_str.Mov.vel(principal_target_ind);
+            
+            eeg_fb_temp = COT_str.EEG.EEG_FB(principal_target_ind);
+            eeg_pre_temp = COT_str.EEG.EEG_Pre(principal_target_ind);
+            eeg_base_temp = COT_str.EEG.EEG_baseline(principal_target_ind);
+            
+            touch_ind = COT_str.Mov.touch_ind_FB(principal_target_ind);
+            
+            % off-target
+            off_target_ind = (target_labels>=5);
+            off_target_temp_pos = COT_str.Mov.pos(off_target_ind);
+            off_target_temp_vel = COT_str.Mov.vel(off_target_ind);
+            
+            off_target_eeg_fb_temp = COT_str.EEG.EEG_FB(off_target_ind);
+            off_target_eeg_pre_temp = COT_str.EEG.EEG_Pre(off_target_ind);
+            off_target_eeg_base_temp = COT_str.EEG.EEG_baseline(off_target_ind);
+            
+            %%% building eeg complx with fb and pre
+            if (T_after~=0)&&(T_before~=0)
+                eegafter = cellfun(@(x)x(1:T_after,:),eeg_fb_temp,'UniformOutput',false);
+                eegbefore = cellfun(@(x)x(end-T_before:end-1,:),eeg_pre_temp,'UniformOutput',false);
+                
+                eegcomplex_temp= cell(1,length(eegbefore));
+                for ii=1:length(eegbefore)
+                    eegcomplex_temp{1,ii} = [eegbefore{1,ii};eegafter{1,ii}];
+                end
+                
+                % off-targets
+                
+                off_target_eegafter = cellfun(@(x)x(1:T_after,:),off_target_eeg_fb_temp,'UniformOutput',false);
+                off_target_eegbefore = cellfun(@(x)x(end-T_before:end-1,:),off_target_eeg_pre_temp,'UniformOutput',false);
+                off_target_eegcomplex_temp= cell(1,length(off_target_eegbefore));
+                
+                for ii=1:length(off_target_eegbefore)
+                    off_target_eegcomplex_temp{1,ii} = [off_target_eegbefore{1,ii};off_target_eegafter{1,ii}];
+                end
+                
+                
+            elseif T_before==0
+                fprintf("just after \n")
+                eegafter = cellfun(@(x)x(1:T_after,:),eeg_fb_temp,'UniformOutput',false);
+                eegcomplex_temp = eegafter;
+                
+                %off targets
+                
+                fprintf("just after \n")
+                off_target_eegafter = cellfun(@(x)x(1:T_after,:),off_target_eeg_fb_temp,'UniformOutput',false);
+                off_target_eegcomplex_temp = off_target_eegafter;
+                
+            elseif T_after==0
+                fprintf("just before \n")
+                eegbefore = cellfun(@(x)x(end-T_before+1:end,:),eeg_pre_temp,'UniformOutput',false);
+                eegcomplex_temp = eegbefore;
+                
+                %off target
+                
+                fprintf("just before \n")
+                off_target_eegbefore = cellfun(@(x)x(end-T_before+1:end,:),off_target_eeg_pre_temp,'UniformOutput',false);
+                off_target_eegcomplex_temp = off_target_eegbefore;
+                
+                
+            end
+            %%%%%%%%%%%%%%%%%%%%  SPATIAL FILTERING
+            
+            
+            %%%%%%%%%%%%%%%%%%%%%%%%% remove channels
+            if strcmp(remove_channels,'on')
+                eegcomplex_temp = cellfun(@(x)x(:,selected_ch),eegcomplex_temp,'UniformOutput',false);
+                off_target_eegcomplex_temp = cellfun(@(x)x(:,selected_ch),off_target_eegcomplex_temp,'UniformOutput',false);
+                eeg_fb_temp = cellfun(@(x)x(:,selected_ch),eeg_fb_temp,'UniformOutput',false);
+                off_target_eeg_fb_temp = cellfun(@(x)x(:,selected_ch),off_target_eeg_fb_temp,'UniformOutput',false);
+                
+                fprintf("\n some channels removed \n")
+            end
+            
+            EEG_Trials_Complex = [EEG_Trials_Complex,eegcomplex_temp];
+            Target_ind_Trials = [Target_ind_Trials, target_indices];
+            POS_Trials = [POS_Trials,temp_pos];
+            VEL_Trials = [VEL_Trials,temp_vel];
+            EEG_FB = [EEG_FB,eeg_fb_temp];
+            
+            % off-target
+            off_target_EEG_Trials_Complex = [off_target_EEG_Trials_Complex,off_target_eegcomplex_temp];
+            off_target_POS_Trials = [off_target_POS_Trials,off_target_temp_pos];
+            off_target_EEG_FB =[off_target_EEG_FB,off_target_eeg_fb_temp];
+        end
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+end % end of switch
+
+
+
+class_one_idx = sort([find((Target_ind_Trials==1)), find((Target_ind_Trials==3))]);
+class_two_idx = sort([find((Target_ind_Trials==2)), find((Target_ind_Trials==4))]);
+minlength = min(length(class_one_idx),length(class_two_idx));
+
+class_one_idx = class_one_idx(1:minlength);
+class_two_idx = class_two_idx(1:minlength);
+%%% spilliting eeg, eeg_fb, pos, labels into TWO class
+EEG_class1 = EEG_Trials_Complex(1,class_one_idx);
+eeg_fb_1 = EEG_FB(1,class_one_idx);
+pos1 = POS_Trials(1,class_one_idx);
+class1_labels = Target_ind_Trials(1,class_one_idx);
+
+EEG_class2 = EEG_Trials_Complex(1,class_two_idx);
+eeg_fb_2 = EEG_FB(1,class_two_idx);
+pos2 = POS_Trials(1,class_two_idx);
+class2_labels = Target_ind_Trials(1,class_two_idx);
+
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%% classification + regression %%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% filterbank csp based on butterworh filtering
+% function containing CSP vanilla + k-fold + SVM
+% class1 cell(1*Ntrials) containing class1 trials
+% class2 cell(1*Ntrials) containing class1 trials
+% K= 10
+% m = 3;
+% number of k-fold repetition
+%MyFBCSP
+%input:Xtr1,Xtr2,m
+% fbclass1 and fbclass1 : frreqbands * Ntrials
+
+
+
+
+rng("default")
+
+class1 = EEG_class1;
+class2 = EEG_class2;
+K= 10;
+m=3;
+rep = 1;
+FFF = 10;
+FSMETHOD = 'ardiMI'; %% 'mrmr', 'ardiMI', 'rlf', 'cna', 'ttest', 'entropy', 'wlx', 'roc'
+Ntrials = length(class1);
+trial_length = size(class1{1, 1},1); % length of each trial
+
+
+
+% %%%%%%%%%%  iir filtering
+freqbands = [1 4;4 8;8 12; 12 20;20 30;30 40];
+% freqbands = [1 4;4 8;8 12; 12 16;16 20;20 24;24 28;28 32;32 36];
+fbs = size(freqbands,1);
+Nord = 4;
+
+A = zeros(fbs,2*Nord+1);
+B = zeros(fbs,2*Nord+1);
+
+for fb= 1:fbs
+    [B(fb,:),A(fb,:)] = butter(Nord,freqbands(fb,:)/(Fs/2),'bandpass');
+end
+
+[bl_1,al_1] = butter(3,0.5/(Fs/2),'low');% cutoff 2 Hz
+[bl_2,al_2] = butter(3,12/(Fs/2),'low');
+
+fbclass1 = cell(fbs+2,Ntrials);
+fbclass2 = cell(fbs+2,Ntrials);
+
+cont1 = cell2mat(class1');
+cont2 = cell2mat(class2');
+
+for fb=1:fbs
+    
+    temp1 = filtfilt(B(fb,:),A(fb,:),cont1);
+    fbclass1(fb,:) = mat2cell(temp1,trial_length*ones(1,Ntrials))';
+    
+    
+    temp2 = filtfilt(B(fb,:),A(fb,:),cont2);
+    fbclass2(fb,:) = mat2cell(temp2,trial_length*ones(1,Ntrials))';
+    
+end
+
+
+temp1 = filtfilt(bl_1,al_1,cont1);
+fbclass1(fbs+1,:) = mat2cell(temp1,trial_length*ones(1,Ntrials))';
+temp1 = filtfilt(bl_2,al_2,cont1);
+fbclass1(fbs+2,:) = mat2cell(temp1,trial_length*ones(1,Ntrials))';
+%
+temp1 = filtfilt(bl_1,al_1,cont2);
+fbclass2(fbs+1,:) = mat2cell(temp1,trial_length*ones(1,Ntrials))';
+temp1 = filtfilt(bl_2,al_2,cont2);
+fbclass2(fbs+2,:) = mat2cell(temp1,trial_length*ones(1,Ntrials))';
+
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% end of filtering
+
+%%%%%%%%%%%%%%%%%% end of freq decompsition
+shuffled_idx = randperm(length(class1));
+fbclass1 = fbclass1(:,shuffled_idx);
+fbclass2 = fbclass2(:,shuffled_idx);
+
+
+
+eeg_fb_1 = eeg_fb_1(1,shuffled_idx) ;
+pos1 = pos1(1,shuffled_idx);
+class1_labels = class1_labels(1,shuffled_idx) ;
+
+
+eeg_fb_2 = eeg_fb_2(1,shuffled_idx);
+pos2 = pos2(1,shuffled_idx) ;
+class2_labels = class2_labels(1,shuffled_idx);
+
+
+
+
+PERF1 = zeros(rep,K);
+WCSP_BOX = cell(rep,K);
+
+for irep = 1:rep
+    
+    
+    indx1=1:length(class1);
+    indx2=1:length(class2);
+    ind1=round(linspace(1,length(class1),K+1));
+    ind2=round(linspace(1,length(class2),K+1));
+    
+    PERF=zeros(1,K);
+    
+    for k=1:K
+        %fprintf("CV k = %d \n",k)
+        % Class 1
+        a=indx1;
+        b=indx1(ind1(k)):indx1(ind1(k+1)-1); % test indices
+        a(b)=[]; % train indices
+        Xtr1=fbclass1(:,a);
+        Xte1=fbclass1(:,b);
+        
+        %%% regression class1 train test
+        eeg_tr1 = eeg_fb_1(1,a) ;
+        pos_tr1 = pos1(1,a);
+        label_tr1 = class1_labels(1,a) ;
+        
+        eeg_te1 = eeg_fb_1(1,b) ;
+        pos_te1 = pos1(1,b);
+        label_te1 = class1_labels(1,b) ;
+        
+        %%
+        %
+        % Class 2
+        a=indx2;
+        b=indx2(ind2(k)):indx2(ind2(k+1)-1);
+        a(b)=[];
+        Xtr2=fbclass2(:,a);
+        Xte2=fbclass2(:,b);
+        
+        
+        %%% regression class2 train test
+        eeg_tr2 = eeg_fb_2(1,a) ;
+        pos_tr2 = pos2(1,a);
+        label_tr2 = class2_labels(1,a) ;
+        
+        eeg_te2 = eeg_fb_2(1,b) ;
+        pos_te2 = pos2(1,b);
+        label_te2 = class2_labels(1,b) ;
+        
+        
+        %%%%%************ FBCSP
+        %     Training FBCSP features
+        W_cell = cell(1,size(fbclass2,1));
+        Ftrain1=[];Ftrain2=[];
+        Ftest1=[];Ftest2=[];
+        
+        for ifi=1:size(fbclass2,1)
+            
+            W_cell{1,ifi} = MyCSP(Xtr1(ifi,:),Xtr2(ifi,:),m);
+            
+            temp1 = cellfun(@(x)x*W_cell{1,ifi},Xtr1(ifi,:),'UniformOutput',false);
+            temp1 = cellfun(@(x)log10(var(x)),temp1,'UniformOutput',false);
+            Ftemp = cell2mat(temp1');
+            Ftrain1=[Ftrain1,Ftemp];
+            
+            temp2 = cellfun(@(x)x*W_cell{1,ifi},Xtr2(ifi,:),'UniformOutput',false);
+            temp2 = cellfun(@(x)log10(var(x)),temp2,'UniformOutput',false);
+            Ftemp = cell2mat(temp2');
+            Ftrain2=[Ftrain2,Ftemp];
+            
+        end
+        
+        %% making FBCSP test features
+        
+        for ifi=1:size(fbclass2,1)
+            
+            temp1 = cellfun(@(x)x*W_cell{1,ifi},Xte1(ifi,:),'UniformOutput',false);
+            temp1 = cellfun(@(x)log10(var(x)),temp1,'UniformOutput',false);
+            Ftemp = cell2mat(temp1');
+            Ftest1=[Ftest1,Ftemp];
+            
+            temp2 = cellfun(@(x)x*W_cell{1,ifi},Xte2(ifi,:),'UniformOutput',false);
+            temp2 = cellfun(@(x)log10(var(x)),temp2,'UniformOutput',false);
+            Ftemp = cell2mat(temp2');
+            Ftest2=[Ftest2,Ftemp];
+            
+        end
+        
+        
+        
+        Ftrain=[Ftrain1;Ftrain2];
+        Ftest=[Ftest1;Ftest2];
+        GroupTR=[zeros(1,size(Ftrain1,1)),ones(1,size(Ftrain2,1))]';
+        GroupTE=[zeros(1,size(Ftest1,1)),ones(1,size(Ftest2,1))]';
+        
+        %%% feature selection
+        selected_idx = fs_classification(Ftrain,GroupTR,FSMETHOD);
+        selected_idx = selected_idx(1:FFF);
+        
+        
+        %                 [Ftrain,mu,sigma] = zscore(Ftrain);
+        %                 Ftest = (Ftest-mu./sigma);
+        % % %         SVMStruct = fitcsvm(Ftrain,GroupTR,'Standardize',false,'KernelFunction','gaussian',...
+        % % %     'KernelScale','auto');
+        
+        SVMStruct = fitcsvm(Ftrain(:,selected_idx),GroupTR);
+        pred_labels= predict(SVMStruct,Ftest(:,selected_idx));
+        perf=sum(pred_labels==GroupTE)/length(GroupTE);
+        PERF(k)=perf;
+        WCSP_BOX{irep,k} = W_cell;
+        %%
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% regression part
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %%%%%%%%%%%%
+        % input: eeg_tr1, eeg_tr2, pos_tr1, pos_tr2, label_tr1, label_tr2
+        % input: eeg_te1, eeg_te2, pos_te1, pos_te2, label_te1, label_te2
+        % input: pred_labels
+        % output: ypred_1, ypred_2, pearson correlation, NRMSE
+        
+        
+    end % end of K fold
+    PERF1(irep,:) = PERF;
+    
+    shuffled_idx = randperm(length(class1));
+    fbclass1 = fbclass1(:,shuffled_idx);
+    fbclass2 = fbclass2(:,shuffled_idx);
+    fprintf("irep: %d \n",irep)
+    fprintf("number of features: %d \n",FFF)
+end % end of rep (irep=1:rep)
+
+
+
+%% %%%%%%%%%%%%%%%%%%%%%%% representing RESULTS %%%%%%%%%%%%%%%%%%%%%%%%%%%
+meanvector = mean(PERF1);
+disp(["mean: ", num2str(mean(meanvector)*100)])
+disp(["T_before  ",alignment, num2str(T_before/Fs)])
+disp(["T_after  ", alignment, num2str(T_after/Fs)])
+disp(["Fs: ", Fs])
+disp(["sub number: " sub_no])
+figure,
+plot(PERF1')
+figure,
+pwelch(COT_str.EEG.EEG_FB{1, 5}(:,7),[],[],[],Fs);figure(gcf)
+
+
+adf
+eegclass1_cont = cell2mat(EEG_class1');
+eegclass2_cont = cell2mat(EEG_class2');
