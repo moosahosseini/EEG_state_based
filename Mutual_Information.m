@@ -21,9 +21,7 @@ for i=1:size(featuretrain,1)
     pxy_joint= hxy/n;
     pxy_indep= px'*py;
     tp= pxy_joint.* log2(pxy_joint./pxy_indep );
-    %     MI(i)=nansum(tp(:)); dar matrix tp momken ast maghadir NaN dashte
-    %     bashim pas bayad oonha ro hazf konim az mohasebatemoon (jam
-    %     kardan)
+
     MI(i) = nansum(tp(:));
 %     index= find(isnan(tp)==0);
 %     MI(i)=sum(tp(index));
