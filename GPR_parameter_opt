@@ -1,0 +1,566 @@
+% GPR regression
+% performs Gridsearch for Sigma (std of model error)
+
+% regressor for class 1 (x-axis) and class 2 (y-axis)
+% FS-regression (FOR TWO MODELS)
+% accepting features and targets as inputs
+% doing k-fold feature selection-based regression
+
+% inputs:features_1, features_2, features_off;
+% inputs :final_target_1 , final_target_2 , final_target_off
+% inputs: FS: on/off - how many features? FFF
+% output: regression results
+
+close all
+savedir = pwd;
+saveresults = 'y'; % 'y' , 'n'
+savename = strcat(savedir,'\sub_',sub_no,'_GPR_results.mat');
+% method only gpr
+% kernels: linear, SE
+% sum = linear + SquaredExponential + sigma*I
+%
+
+sigmagrid = [1e-3, 1e-2, 0.1, 0.15, 0.2, 0.25, 0.4 ,0.5,...
+     0.7, 0.8 , 0.9, 1.1, 1.2, 1.3, 1.4, 1.5, 1.7, 1.9, 2.1];
+
+starttime = tic;
+
+
+
+grid_length = length(sigmagrid);
+
+FeatSelection = 'y';
+
+Feature_Number_Table = 30:20:250;
+% Feature_Number_Table = [100 250];
+GPR_Kernel = 'se'; % se, lin , sum
+FS_type = 'MI'; % 'pls','corr', 'MI' , corr_Bal , MI_Bal, corr_p_eli, MI_p_eli, 'F_test'
+%Feature = [features];
+
+if ~strcmp(FeatSelection,'y')
+    TNF = 1; %total number of FS iterations
+    LLL = 1;
+else
+    TNF = size(features_1,2);
+    
+    LLL =length(Feature_Number_Table);
+    totPearson_1 = zeros(LLL,2) ;
+    totPearson_2 = zeros(LLL,2) ;
+end
+
+
+K = 10;
+PearsonBox = zeros(2,LLL,2);
+R2Box = zeros(2,LLL,2);
+
+RegTime = zeros(1,K);
+
+trainReconBox = cell(2,K);
+testReconBox = cell(2,K);
+
+
+SelectedFeatureIndex = cell(2,K);
+KFOLDbox1 = NaN(K,LLL);
+KFOLDbox2 = NaN(K,LLL);
+
+%  K fold CV
+for iFi = 1:LLL
+    
+    indx1=1:size(features_1,1);
+    ind1=round(linspace(1,size(features_1,1),K+1));
+    
+    indx2=1:size(features_2,1);
+    ind2=round(linspace(1,size(features_2,1),K+1));
+    
+    Pearson_1 = zeros(K,grid_length); % test pearson model 1 x axis
+    Pearson_2 = zeros(K,grid_length);  % test pearson model 2 y axis
+    R2_1 = zeros(K,grid_length); % test r2 model 2 y axis
+    R2_2 = zeros(K,grid_length); % test r2 model 2 y axis
+    
+
+    
+    
+    for isig=1:grid_length
+       fprintf(" \n sigma = %d \n", sigmagrid(isig)) 
+        
+        
+        
+        for k=1:K
+            
+            fprintf('\n fold number = %d\n ' , k)
+            %model 1
+            a=indx1;
+            b=indx1(ind1(k)):indx1(ind1(k+1)-1); % test indices
+            a(b)=[]; % train indices
+            
+            featTR_1=features_1(a,:); %%Train Feature
+            featTE_1=features_1(b,:);  %%% Test feature
+            
+            %
+            YTR_1=final_target_1(a,:); %%% train output Y
+            YTE_1=final_target_1(b,:); %%%% test output
+            clear a b
+            
+            % model 2
+            a=indx2;
+            b=indx2(ind2(k)):indx2(ind2(k+1)-1); % test indices
+            a(b)=[]; % train indices
+            
+            featTR_2=features_2(a,:); %%Train Feature
+            featTE_2=features_2(b,:);  %%% Test feature
+            
+            %
+            YTR_2=final_target_2(a,:); %%% train output Y
+            YTE_2=final_target_2(b,:); %%%% test output
+            
+            
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%% feat selection %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            %output : index of features selected model (i) for x and y
+            %         idxfs_1_x & y, idxfs_2_x & y.
+            if strcmp(FeatSelection,'y')
+                
+                switch FS_type
+                    
+                    case 'pls'
+                    
+                    ncomp = Feature_Number_Table(iFi) ;
+                    %second row contains mean-squared errors for the response variable(s) in Y
+                    [XL_1,YL_1,XS_1,YS_1,BETA1,PCTVAR_1,MSE_1,stats1] = plsregress(featTR_1,YTR_1(:,1),ncomp);
+                    %plsFeat_tr1 = featTR_1*pinv(XL_1*XL_1')*XL_1;
+                    
+                    [XL_2,YL_2,XS_2,YS_2,BETA2,PCTVAR_2,MSE_2,stats2] = plsregress(featTR_2,YTR_2(:,2),ncomp);
+                    %plsFeat_tr2 = featTR_2*pinv(XL_2*XL_2')*XL_2;
+                    
+                    % train features model 1 and 2
+                    featTR_1_x = featTR_1*pinv(XL_1*XL_1')*XL_1;
+                    %featTR_1_y = featTR_1_x;
+                    
+                    featTR_2_y = featTR_2*pinv(XL_2*XL_2')*XL_2;
+                    %featTR_2_x  = featTR_2_y;
+                    
+                    % test features model 1 and 2
+                    featTE_1_x = featTE_1*pinv(XL_1*XL_1')*XL_1;
+                   % featTE_1_y = featTE_1_x;
+                    
+                    featTE_2_y = featTE_2*pinv(XL_2*XL_2')*XL_2;
+                    %featTE_2_x = featTE_2_y;
+                    
+                    case 'corr'
+                        
+                        corrtype = 'abs'; % 'abs' 'n'
+                        %model 1
+                        [score_1_x, idxfs_1_x] = FeatScorr(featTR_1,YTR_1(:,1),corrtype); % x-axis Correlation feat selection
+                        [score_1_y, idxfs_1_y] = FeatScorr(featTR_1,YTR_1(:,2),corrtype); % y-axis Correlation feat selection
+                        
+                        %model 2
+                        [score_2_x, idxfs_2_x] = FeatScorr(featTR_2,YTR_2(:,1),corrtype); % x-axis Correlation feat selection
+                        [score_2_y, idxfs_2_y] = FeatScorr(featTR_2,YTR_2(:,2),corrtype); % y-axis Correlation feat selection
+                        
+                    case 'MI'
+                        %model 1
+                        [idxfs_1_x, idxfs_1_y, ind_1_xy] = myMIfeat(featTR_1,YTR_1);
+                        % model 2
+                        [idxfs_2_x, idxfs_2_y, ind_2_xy] = myMIfeat(featTR_2,YTR_2);
+                    case 'MI_Bal'
+                        %model 1
+                        [idxfs_1_x, idxfs_1_y, ind_1_xy] = myMIfeat(featTR_1,YTR_1);
+                        idxfs_1_x = Bal_selector(idxfs_1_x,idxfs_1_y,Feature_Number_Table(iFi));
+                        idxfs_1_y = idxfs_1_x ;
+                        %model 2
+                        [idxfs_2_x, idxfs_2_y, ind_2_xy] = myMIfeat(featTR_2,YTR_2);
+                        idxfs_2_x = Bal_selector(idxfs_2_x,idxfs_2_y,Feature_Number_Table(iFi));
+                        idxfs_2_y = idxfs_2_x ;
+                        
+                    case 'corr_Bal'
+                        %model 1
+                        idxfs_1_x =  FeatScorr_Bal(featTR_1,YTR_1,Feature_Number_Table(iFi));
+                        idxfs_1_y = idxfs_1_x ;
+                        
+                        %model 2
+                        idxfs_2_x =  FeatScorr_Bal(featTR_2,YTR_2,Feature_Number_Table(iFi));
+                        idxfs_2_y = idxfs_2_x ;
+                        
+                    case 'corr_p_eli'
+                        
+                        %model 1 &2
+                        
+                        [featTR_xP,featTR_yP,idxfs_1_x,idxfs_2_y] = ...
+                            Corr_BkEli_dual_mono(featTR_1,featTR_2,YTR_1(:,1),YTR_2(:,2),2*Feature_Number_Table(iFi), Feature_Number_Table(iFi));
+                        
+                        idxfs_1_y =   idxfs_1_x;
+                        idxfs_2_x = idxfs_2_y;
+                        % % %
+                        % % %                     %model 2
+                        % % %                     [featTR_xP,featTR_yP,idxfs_2_x,idxfs_2_y] = ...
+                        % % %                         Corr_BkEli(featTR_2,YTR_2,2*Feature_Number_Table(iFi), Feature_Number_Table(iFi));
+                        
+                    case 'MI_p_eli'
+                        % model 1
+                        [featTR_xP,featTR_yP,idxfs_1_x,idxfs_1_y] = ...
+                            MI_BkEli(featTR_1,YTR_1,2*Feature_Number_Table(iFi), Feature_Number_Table(iFi));
+                        
+                        % model 2
+                        [featTR_xP,featTR_yP,idxfs_2_x,idxfs_2_y] = ...
+                            MI_BkEli(featTR_2,YTR_2,2*Feature_Number_Table(iFi), Feature_Number_Table(iFi));
+                    case 'F_test'
+                        % model 1
+                        idxfs_1_x = fsrftest(featTR_1,YTR_1(:,1)) ;
+                        idxfs_1_y = fsrftest(featTR_1,YTR_1(:,2)) ;
+                        
+                        % model
+                        idxfs_2_x = fsrftest(featTR_2,YTR_2(:,1)) ;
+                        idxfs_2_y = fsrftest(featTR_2,YTR_2(:,2)) ;
+                        
+                end
+                
+                % after finding best feature indices, select train and test
+                % features
+                if strcmp(FS_type,'pls')
+                    fprintf('\n pls feature reduction \n')
+                    
+                else
+                    %model 1
+                    idxfs_1_x = idxfs_1_x(1:Feature_Number_Table(iFi));
+                    idxfs_1_y = idxfs_1_y(1:Feature_Number_Table(iFi));
+                    
+                    featTR_1_x = featTR_1(:,idxfs_1_x);
+                    featTE_1_x = featTE_1(:,idxfs_1_x);
+                    
+                    featTR_1_y = featTR_1(:,idxfs_1_y);
+                    featTE_1_y = featTE_1(:,idxfs_1_y);
+                    
+                    %model 2
+                    
+                    idxfs_2_x = idxfs_2_x(1:Feature_Number_Table(iFi));
+                    idxfs_2_y = idxfs_2_y(1:Feature_Number_Table(iFi));
+                    
+                    featTR_2_x = featTR_2(:,idxfs_2_x);
+                    featTE_2_x = featTE_2(:,idxfs_2_x);
+                    
+                    featTR_2_y = featTR_2(:,idxfs_2_y);
+                    featTE_2_y = featTE_2(:,idxfs_2_y);
+                    
+                    fprintf("*****number of feat_x %d ***** \n",size(featTR_1_x,2) );
+                    fprintf("*****number of feat_y %d ***** \n",size(featTR_1_y,2) );
+                    
+                    SelectedFeatureIndex{1,k}=idxfs_1_x;
+                    SelectedFeatureIndex{2,k}=idxfs_2_y;
+                    
+                end % end of index-base selection or pls reduction
+                
+            else
+                fprintf("\n***** Feature Selection algorithm is OFF *****")
+                fprintf("\n***** Number of features: %d *****\n", size((featTR),2));
+                
+                %model 1
+                featTR_1_x = featTR_1;
+                featTE_1_x = featTE_1;
+                featTR_1_y = featTR_1;
+                featTE_1_y = featTE_1;
+                
+                %model 1
+                featTR_2_x = featTR_2;
+                featTE_2_x = featTE_2;
+                featTR_2_y = featTR_2;
+                featTE_2_y = featTE_2;
+                
+            end%%%%end of Feat Selection %%%%%%%%%%%%%%%%%%%%%%%%%%5
+            
+            
+            %%%%%%%%%%%%%%%%%%%%%%%%%% Regression method
+            % model 1: featTR_1_x ,featTE_1_x, featTR_1_y, ,featTE_1_y, YTR_1, YTE_1
+            % model 2: featTR_2_x ,featTE_2_x, featTR_2_y, ,featTE_2_y, YTR_2, YTE_2
+            
+            
+            
+            
+            %%%% GP regression
+            
+            
+            [featTR_1_x,mu,sigma] = zscore(featTR_1_x);
+            featTE_1_x = (featTE_1_x-mu)./sigma;
+            
+            [YTR_1,mu,sigma] = zscore(YTR_1);
+            YTE_1 = (YTE_1-mu)./sigma;
+            %
+            
+            [featTR_2_y,mu,sigma] = zscore(featTR_2_y);
+            featTE_2_y = (featTE_2_y-mu)./sigma;
+            
+            [YTR_2,mu,sigma] = zscore(YTR_2);
+            YTE_2 = (YTE_2-mu)./sigma;
+            
+
+            
+            %%%
+            switch GPR_Kernel
+                
+                case 'lin'
+                    
+                    sigma = 2;
+                    sigmab = 5;
+                    theta = log([sigma;sigmab]);
+
+                    gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'FitMethod','exact','PredictMethod','exact',...
+                        'KernelFunction',@myGlinear_kernel,'KernelParameters',theta,'Standardize',1,...
+                        'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+                    
+                    gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'FitMethod','exact','PredictMethod','exact',...
+                        'KernelFunction',@myGlinear_kernel,'KernelParameters',theta,'Standardize',1,...
+                        'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+            
+ 
+
+                case 'sum'
+                    
+                    sigma = 2;
+                    sigmab = 5;
+                    sigmaF2 = 2;
+                    sigmaL2 = 5;
+                    theta = log([sigma;sigmab;sigmaF2;sigmaL2]);
+                    
+            gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'FitMethod','exact','PredictMethod','exact',...
+                'KernelFunction',@myGkernelsum,'KernelParameters',theta,'Standardize',1,...
+                'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+            
+            gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'FitMethod','exact','PredictMethod','exact',...
+                'KernelFunction',@myGkernelsum,'KernelParameters',theta,'Standardize',1,...
+                'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            
+            
+                case 'se'
+            gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'BasisFunction','none','KernelFunction','squaredexponential',...
+                'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+            
+            gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'BasisFunction','none','KernelFunction','squaredexponential',...
+                'ConstantSigma' ,true, 'Sigma',sigmagrid(isig),'verbose',0);
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            end
+            
+            
+            
+
+            
+            Loss_train = resubLoss(gprMd_1);
+            Ypr_x = predict(gprMd_1,featTE_1_x);
+            Loss_test = loss(gprMd_1,featTE_1_x,YTE_1(:,1));
+            r2 = 1-var(Ypr_x-YTE_1(:,1))/(var(YTE_1(:,1)));
+            
+      
+            
+            pear = corr2(Ypr_x,YTE_1(:,1));
+            
+            Pearson_1(k,isig) = pear;
+            R2_1(k,isig) = r2;
+            clear r2 pear
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            %model 2
+            % featTR_2_x, YTR_2(:,1)
+            % featTR_2_y, YTR_2(:,2)
+            
+            % sum of kernels
+            
+            
+            
+            Loss_train = resubLoss(gprMd_2);
+            Ypr_y = predict(gprMd_2,featTE_2_y);
+            Loss_test = loss(gprMd_2,featTE_2_y,YTE_2(:,2));
+            r2 = 1-var(Ypr_y-YTE_2(:,2))/(var(YTE_2(:,2)));
+            
+           
+            
+            pear = corr2(Ypr_y,YTE_2(:,2));
+            Pearson_2(k,isig) = pear;
+            R2_2(k,isig) = r2;
+            clear r2 pear
+            
+            
+            %%%%%%%%%%%%%%%%%end of regresssion method %%%%%%%%%%%%%
+          
+        end %%% end of k-fold regression
+        fprintf(" i = %d ", isig), fprintf("out of %d \n", grid_length);
+        
+    end% end of sigmagrid
+    
+    [mx, idmx1] = max(mean(Pearson_1));
+    PearsonBox(1, iFi,1) = mx;
+    PearsonBox(1, iFi,2) = sigmagrid(idmx1);
+    
+    [mx, idmx2] = max(mean(Pearson_2));
+    PearsonBox(2, iFi,1) = mx;
+    PearsonBox(2, iFi,2) = sigmagrid(idmx2);
+    
+    KFOLDbox1(:,iFi) = Pearson_1(:,idmx1);
+    KFOLDbox2(:,iFi) = Pearson_2(:,idmx2);
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    [mx, idmx] = max(mean(R2_1));
+    R2Box(1, iFi,1) = mx;
+    R2Box(1, iFi,2) = sigmagrid(idmx);
+    
+    [mx, idmx] = max(mean(R2_2));
+    R2Box(2, iFi,1) = mx;
+    R2Box(2, iFi,2) = sigmagrid(idmx);
+    
+    
+end % end of iFi = 1:LLL
+
+% indentify Inf !
+PearsonBox(isinf(PearsonBox))=0;
+
+figure
+plot(Feature_Number_Table,PearsonBox(:,:,1)')
+title('pearson over number of features');
+xlabel('number of features');
+legend('model 1','model 2');
+system_mean = mean(PearsonBox(:,:,1));
+[mxsystemmean, idxsystemmean] = max(system_mean);
+systemmean_numberfeatures = Feature_Number_Table(idxsystemmean);
+
+fprintf(" kernel type  : %s \n", GPR_Kernel);
+[mx1, idx1]=max(PearsonBox(1,:,1));
+fprintf("best results for model 1 pearson: %f \n",mx1 );
+fprintf("best results for model 1 at sigma: %f \n", PearsonBox(1,idx1,2));
+fprintf("best results for model 1 at R2: %f \n", R2Box(1,idx1,1));
+fprintf("best results for model 1 # features: %d \n", Feature_Number_Table(idx1));
+opt_sigma_x = PearsonBox(1,idx1,2);
+opt_LLL_x = Feature_Number_Table(idx1); % index for opt featrue for axis x
+
+[mx2, idx2]=max(PearsonBox(2,:,1));
+fprintf("best results for model 2 pearson: %f \n",mx2 );
+fprintf("best results for model 2 at sigma: %f \n", PearsonBox(2,idx2,2));
+fprintf("best results for model 2 at R2: %f \n", R2Box(2,idx1,1));
+fprintf("best results for model 2 # features: %d \n", Feature_Number_Table(idx2));
+opt_sigma_y = PearsonBox(2,idx2,2);
+opt_LLL_y = Feature_Number_Table(idx2); % index for opt featrue for axis y
+
+fprintf("best avg result for model 1 and 2: %f \n", mean([mx1 mx2]));
+fprintf("best avg result for system: %f \n", mxsystemmean);
+fprintf("best avg result for system at feature number: %f \n", systemmean_numberfeatures);
+
+Kfold_x_best = KFOLDbox1(:,idx1);
+Kfold_y_best = KFOLDbox2(:,idx2);
+e1 = mean(Kfold_x_best)-mx1;
+e2 = mean(Kfold_y_best)-mx2;
+fprintf("\n error1 = %d\n", e1);
+fprintf("\n error1 = %d\n", e2);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+closingtime = toc(starttime);
+fprintf("tic toc time(min) : %f \n", closingtime/60)
+
+
+
+%% regression on non-principal targts GPR
+% input : features_off,final_target_off
+% opt_sigma_x, opt_sigma_y, opt_LLL_x, opt_LLL_y
+
+
+FeatSelection = 'y'; %'y' 'n'
+featTR_1 = features_1;
+featTR_2 = features_2;
+YTR_1 = final_target_1;
+YTR_2 = final_target_2;
+%%%NF = 110; % number of optimum features
+
+[idxfs_1_x, idxfs_2_y] = regressFS(FS_type,opt_LLL_x,opt_LLL_y,featTR_1,YTR_1,featTR_2,YTR_2);
+
+featTR_1_x = featTR_1(:,idxfs_1_x);
+featTR_2_y = featTR_2(:,idxfs_2_y);
+
+%%
+switch GPR_Kernel
+    
+    case 'lin'
+        
+        sigma = 2;
+        sigmab = 5;
+        theta = log([sigma;sigmab]);
+        
+        gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'FitMethod','exact','PredictMethod','exact',...
+            'KernelFunction',@myGlinear_kernel,'KernelParameters',theta,'Standardize',1,...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_x,'verbose',0);
+        
+        gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'FitMethod','exact','PredictMethod','exact',...
+            'KernelFunction',@myGlinear_kernel,'KernelParameters',theta,'Standardize',1,...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_y,'verbose',0);
+        
+        
+        
+    case 'sum'
+        
+        sigma = 2;
+        sigmab = 5;
+        sigmaF2 = 2;
+        sigmaL2 = 5;
+        theta = log([sigma;sigmab;sigmaF2;sigmaL2]);
+        
+        gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'FitMethod','exact','PredictMethod','exact',...
+            'KernelFunction',@myGkernelsum,'KernelParameters',theta,'Standardize',1,...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_x,'verbose',0);
+        
+        gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'FitMethod','exact','PredictMethod','exact',...
+            'KernelFunction',@myGkernelsum,'KernelParameters',theta,'Standardize',1,...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_y,'verbose',0);
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        
+        
+    case 'se'
+        gprMd_1 = fitrgp(featTR_1_x,YTR_1(:,1),'BasisFunction','none','KernelFunction','squaredexponential',...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_x,'verbose',0);
+        
+        gprMd_2 = fitrgp(featTR_2_y,YTR_2(:,2),'BasisFunction','none','KernelFunction','squaredexponential',...
+            'ConstantSigma' ,true, 'Sigma',opt_sigma_y,'verbose',0);
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+end
+
+
+
+%%
+features_off = zscore(features_off);
+final_target_off = zscore(final_target_off);
+
+
+Ypr_offx = gprMd_1.predict(features_off(:,idxfs_1_x));
+Ypr_offy = gprMd_2.predict(features_off(:,idxfs_2_y));
+
+
+corr_offx = corr2(final_target_off(:,1),Ypr_offx);
+corr_offy = corr2(final_target_off(:,2),Ypr_offy);
+
+Rs_offx = 1 - var(final_target_off(:,1)-Ypr_offx)./(var(final_target_off(:,1)));
+Rs_offy = 1 - var(final_target_off(:,2)-Ypr_offy)./(var(final_target_off(:,2)));
+
+fprintf("Pearson\n")
+fprintf("off-target Pearson x-axis : %f \n",corr_offx);
+fprintf("off-target Pearson y-axis : %f \n",corr_offy);
+fprintf("off-target Pearson mean : %f \n",mean([corr_offx corr_offy]));
+fprintf("R2\n")
+fprintf("off-target R2 x-axis : %f \n",Rs_offx);
+fprintf("off-target R2 y-axis : %f \n",Rs_offy);
+fprintf("off-target R2 mean : %f \n",mean([Rs_offx Rs_offy]));
+
+
+% save results
+finalGPR_results.sub_no = sub_no;
+finalGPR_results.Fs = Fs;
+finalGPR_results.date = sprintf('Date: %s',datestr(datetime('now')));
+finalGPR_results.PearsonBox = PearsonBox;
+finalGPR_results.BestCorrX_N_sigma = [mx1,Feature_Number_Table(idx1),opt_sigma_x];
+finalGPR_results.BestCorrY_N_sigma = [mx2,Feature_Number_Table(idx2), opt_sigma_y];
+
+finalGPR_results.Kfold_x_best = Kfold_x_best;
+finalGPR_results.Kfold_y_best = Kfold_y_best;
+
+finalGPR_results.Bestsystemcorr_N = [mxsystemmean, systemmean_numberfeatures];
+finalGPR_results.offtarget_corrxy = [corr_offx, corr_offy];
+finalGPR_results.FE_method = '6multiband'; 
+finalGPR_results.FS_type = FS_type; %
+finalGPR_results.Feature_Number_Table = Feature_Number_Table;
+if strcmp(saveresults,'y')
+save(savename,'finalGPR_results')
+end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% the optimum model on x and y
