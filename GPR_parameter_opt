@@ -32,7 +32,7 @@ grid_length = length(sigmagrid);
 FeatSelection = 'y';
 
 Feature_Number_Table = 30:20:250;
-% Feature_Number_Table = [100 250];
+
 GPR_Kernel = 'se'; % se, lin , sum
 FS_type = 'MI'; % 'pls','corr', 'MI' , corr_Bal , MI_Bal, corr_p_eli, MI_p_eli, 'F_test'
 %Feature = [features];
