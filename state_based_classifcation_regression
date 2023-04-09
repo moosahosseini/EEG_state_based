@@ -4,7 +4,7 @@
 % output EEG_Trials_Complex
 % choose T_before and T_after before and after alignement time
 % T_before + Aligment + T_after
-% switch + regression
+% switch + regression %
 
 
 clc
